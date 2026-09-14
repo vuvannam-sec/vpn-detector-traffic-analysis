@@ -1,43 +1,89 @@
-import gradio as gr
-import pandas as pd
-import joblib
+"""Gradio front-end for a model bundle produced by train.py."""
+
+from __future__ import annotations
+
 import os
+from pathlib import Path
+from typing import Any
 
-# Load mô hình
-MODEL_PATH = os.path.join("models", "xgb_model.pkl")  # Đổi từ rf_model.pkl thành xgb_model.pkl
+import gradio as gr
+import joblib
+import pandas as pd
+
+from predict import prepare_features
+
+MODEL_PATH = Path(os.environ.get("VPN_MODEL_PATH", "models/xgb_15s.joblib"))
+
+
+def load_bundle(path: Path) -> tuple[Any, dict]:
+    bundle = joblib.load(path)
+    if not isinstance(bundle, dict) or "pipeline" not in bundle or "metadata" not in bundle:
+        raise ValueError(
+            f"{path} is not a model bundle produced by train.py."
+        )
+    return bundle["pipeline"], bundle["metadata"]
+
+
 try:
-    model = joblib.load(MODEL_PATH)
-    print(f"Đã tải mô hình từ {MODEL_PATH}")
-except FileNotFoundError as e:
-    print(f"Lỗi: {e}. Vui lòng chạy train_xgb_and_save.py để tạo mô hình.")
-    exit(1)
+    PIPELINE, METADATA = load_bundle(MODEL_PATH)
+except FileNotFoundError as exc:
+    raise SystemExit(
+        f"Model not found at {MODEL_PATH}. Run `python train.py --window 15` first."
+    ) from exc
 
-# Hàm dự đoán
-def predict(file):
-    if file is None:
-        return "No file", None
-    df = pd.read_csv(file.name)
-    if "label" in df.columns:
-        df = df.drop(columns=["label"])
-    preds = model.predict(df)
-    df["prediction"] = preds
+
+def predict_csv(file_path: str | None):
+    if not file_path:
+        return {"error": "No CSV file selected."}, pd.DataFrame()
+
+    try:
+        frame = pd.read_csv(file_path)
+        features = prepare_features(frame, METADATA)
+        predictions = PIPELINE.predict(features).astype(int)
+        probabilities = PIPELINE.predict_proba(features)[:, 1]
+    except Exception as exc:
+        return {"error": str(exc)}, pd.DataFrame()
+
+    output = frame.copy()
+    output["prediction"] = predictions
+    output["vpn_probability"] = probabilities
+
+    vpn_count = int((predictions == 1).sum())
     summary = {
-        "Total": len(preds),
-        "VPN (1)": int((preds == 1).sum()),
-        "Non-VPN (0)": int((preds == 0).sum()),
+        "rows": int(len(output)),
+        "vpn": vpn_count,
+        "non_vpn": int(len(output) - vpn_count),
+        "window_seconds": METADATA.get("window_seconds"),
     }
-    return summary, df
+    return summary, output
 
-# Tạo giao diện Gradio
-with gr.Blocks(title="VPN Detector") as demo:
-    gr.Markdown("# 🛡️ VPN Detector\nUpload CSV flows -> model predicts VPN or not.")
-    inp = gr.File(label="Upload CSV")
-    out_summary = gr.JSON(label="Summary")
-    out_table = gr.Dataframe(label="Detail")
-    btn = gr.Button("Predict")
-    btn.click(predict, inp, [out_summary, out_table])
 
-# Khởi động server với thông báo tùy chỉnh
+with gr.Blocks(title="VPN Traffic Classifier") as demo:
+    gr.Markdown(
+        """
+# VPN Traffic Classifier
+
+Upload a CSV containing the same flow-feature schema used to train the model.
+The output includes the binary class and the estimated probability of VPN traffic.
+
+This is a research demo trained on ISCXVPN2016 data; it is not a universal VPN detector.
+"""
+    )
+    input_file = gr.File(label="Flow CSV", file_types=[".csv"], type="filepath")
+    predict_button = gr.Button("Run prediction", variant="primary")
+    output_summary = gr.JSON(label="Summary")
+    output_table = gr.Dataframe(label="Predictions")
+
+    predict_button.click(
+        predict_csv,
+        inputs=input_file,
+        outputs=[output_summary, output_table],
+    )
+
+
 if __name__ == "__main__":
-    print("\n⚠️ Truy cập từ máy bạn tại: http://127.0.0.1:7860", flush=True)
-    demo.launch(server_name="0.0.0.0", server_port=7860, show_error=True)
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=7860,
+        show_error=True,
+    )

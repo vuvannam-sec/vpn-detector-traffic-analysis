@@ -1,10 +1,7 @@
-pandas
-numpy
-scikit-learn
-matplotlib
-seaborn
-xgboost
-jupyter
-joblib
-gradio
-packaging
+pandas>=2.2,<4
+numpy>=1.26,<3
+scikit-learn>=1.7,<2
+xgboost-cpu>=3.2,<4; platform_system != "Darwin"
+xgboost>=3.2,<4; platform_system == "Darwin"
+joblib>=1.4,<2
+gradio>=6,<7
