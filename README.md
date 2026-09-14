@@ -40,7 +40,7 @@ The notebooks and older scripts are retained because they document the experimen
 
 ## Quick start
 
-Python 3.10+ is recommended.
+Python 3.12+ is recommended. The dependency ranges are deliberately bounded by major version so a future breaking release is not silently pulled into the environment.
 
 ```bash
 git clone https://github.com/vuvannam-sec/vpn-detector-traffic-analysis.git
